@@ -21,12 +21,12 @@ cameras:
     type: realsense
     role: top
     mode: mono
-    serial: "<your serial>"
+    serial: 262622270861
     width: 640
     height: 480
     fps: 30
     enable_depth: false
-    
+
 control_hz: 30.0
 
 save_root: data/episodes
