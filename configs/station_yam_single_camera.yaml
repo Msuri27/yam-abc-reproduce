@@ -21,7 +21,7 @@ cameras:
     type: realsense
     role: top
     mode: mono
-    serial: 262622270861
+    serial: "262622270861"
     width: 640
     height: 480
     fps: 30
