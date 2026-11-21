@@ -21,7 +21,7 @@ cameras:
     type: realsense
     role: left
     mode: mono
-    serial: "218622272630"
+    serial: "262622273660"
     width: 640
     height: 480
     fps: 30
@@ -31,7 +31,7 @@ cameras:
     type: realsense
     role: right
     mode: mono
-    serial: "218622274205"
+    serial: "262622270861"
     width: 640
     height: 480
     fps: 30

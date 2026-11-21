@@ -63,8 +63,8 @@ Reset CAN paths now reset only the station's configured arm channels, not `can0`
 
 For the distributed bimanual setup with motorized YAM leaders and left/right wrist cameras,
 start from `configs/station_yam_bimanual_wrist.yaml`. It uses the four stable arm channel
-names and keeps the separate LinearBot bus `can0` out of the robot config. Verify the three
-camera serials against the cameras attached to the Thor before collecting.
+names and keeps the separate LinearBot bus `can0` out of the robot config. Verify both
+wrist-camera serials against the cameras attached to the Thor before collecting.
 
 Edit `configs/station_yam.yaml`:
 

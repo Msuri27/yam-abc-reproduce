@@ -3,7 +3,7 @@ from pathlib import Path
 from yam_abc_reproduce.config import build_station_config, controller_channel_for, robot_channel_for
 
 
-def test_bimanual_wrist_station_uses_all_four_arm_buses_and_three_cameras():
+def test_bimanual_wrist_station_uses_all_four_arm_buses_and_left_right_cameras():
     path = Path(__file__).parents[1] / "configs" / "station_yam_bimanual_wrist.yaml"
     cfg = build_station_config(path)
 
@@ -20,7 +20,7 @@ def test_bimanual_wrist_station_uses_all_four_arm_buses_and_three_cameras():
         "yam_lead_right",
     ]
     assert [(camera.name, camera.role) for camera in cfg.cameras] == [
-        ("top", "top"),
         ("left", "left"),
         ("right", "right"),
     ]
+    assert [camera.serial for camera in cfg.cameras] == ["262622273660", "262622270861"]
