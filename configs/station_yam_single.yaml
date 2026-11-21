@@ -1,5 +1,5 @@
 # Single-arm YAM station, no cameras (joint/gripper recording only).
-# Follower on can0, motorized YAM leader (teaching handle) on can1. Based on station_yam.yaml.
+# Left follower and motorized YAM leader use the stable role names.
 
 robot:
   type: yam                 # "yam" for hardware, "mock" for no-hardware dev
@@ -8,13 +8,13 @@ robot:
   num_arm_joints: 6
   leader_gripper_type: yam_teaching_handle  # (only used by motorized yam_lead_* leaders)
   bilateral_kp: 0.0         # ignored for passive-GELLO leaders (no motors)
-  # `channel` overrides the udev-derived CAN name (can_left / can_lead_l).
+  # `channel` selects the named follower and leader buses on the Pi.
   # `gripper_limits: [closed, open]` (motor rad) can pin the follower gripper travel;
   # unpinned, i2rt re-measures it on every Start Teleop (see station_yam.yaml).
   robots:
-    - {type: yam_left, gripper: linear_4310, channel: can0}
+    - {type: yam_left, gripper: linear_4310, channel: can_left}
   controllers:
-    - {type: yam_lead_left, controls: yam_left, channel: can1}
+    - {type: yam_lead_left, controls: yam_left, channel: can_lead_l}
 
 # No cameras_config: the camera list is empty.
 

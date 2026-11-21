@@ -7,6 +7,7 @@ touched here.
 
 import sys
 import types
+from pathlib import Path
 
 import pytest
 import yaml
@@ -22,6 +23,17 @@ from yam_abc_reproduce.config import (
     robot_channel_for,
 )
 from yam_abc_reproduce.runtime import build_arm_units
+
+
+def test_single_arm_no_camera_station_uses_left_role_buses():
+    path = Path(__file__).parents[1] / "configs" / "station_yam_single.yaml"
+    cfg = build_station_config(path)
+
+    (robot,) = cfg.robot.robots
+    (controller,) = cfg.robot.controllers
+    assert robot_channel_for(robot) == "can_left"
+    assert controller_channel_for(controller) == "can_lead_l"
+    assert cfg.cameras == []
 
 
 def test_channel_falls_back_to_the_type_default_when_unset():
