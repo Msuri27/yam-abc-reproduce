@@ -258,7 +258,7 @@ class _RemoteRobot(RobotInterface):
         return self._client.power_off(self._name)
 
 
-class _RemotePassiveLeader:
+class _RemoteLeader:
     def __init__(self, client: RemoteHardwareClient, name: str):
         self._client = client
         self._name = name
@@ -267,14 +267,14 @@ class _RemotePassiveLeader:
         leader = self._client.state(self._name)["leader"]
         return leader["arm"].copy(), leader["gripper"], list(leader["buttons"])
 
-    def leader_angles(self) -> tuple[np.ndarray, np.ndarray]:
+    def leader_angles(self) -> tuple[np.ndarray, np.ndarray] | None:
         leader = self._client.state(self._name)["leader"]
         if leader["raw"] is None or leader["cal"] is None:
-            raise RemoteHardwareError(f"Pi did not return raw GELLO angles for {self._name}")
+            return None
         return leader["raw"].copy(), leader["cal"].copy()
 
     def command_arm(self, arm_joints: np.ndarray) -> None:
-        raise RuntimeError("remote passive GELLO leaders do not support force feedback")
+        raise RuntimeError("remote leaders do not support force feedback")
 
     def stop(self) -> None:
         return None
@@ -282,18 +282,20 @@ class _RemotePassiveLeader:
 
 def build_remote_arm_units(cfg: StationConfig, client: RemoteHardwareClient) -> list[ArmUnit]:
     """Build the same teleop stack over cached Pi snapshots and remote follower commands."""
+    if cfg.robot.bilateral_kp > 0:
+        raise ValueError("remote hardware mode requires bilateral_kp: 0")
     robots = cfg.robot.robots or [cfg.robot.active_robot()]
     units: list[ArmUnit] = []
     for robot_cfg in robots:
         name = _arm_name(robot_cfg.type)
         controller = cfg.robot.controller_for(robot_cfg)
-        if not is_passive_gello(controller.type):
+        if not (is_passive_gello(controller.type) or controller.type.startswith("yam_lead_")):
             raise ValueError(
-                f"remote hardware mode currently requires passive GELLO leaders; "
-                f"{controller.type!r} is not passive"
+                "remote hardware mode supports passive GELLO or motorized YAM leaders; "
+                f"unsupported controller: {controller.type!r}"
             )
         robot = _RemoteRobot(client, name, cfg.robot.num_arm_joints)
-        leader = _RemotePassiveLeader(client, name)
+        leader = _RemoteLeader(client, name)
         agent = YamTeleop(leader=leader, follower=robot, bilateral_kp=0.0)
         units.append(ArmUnit(name, robot, agent))
     return units

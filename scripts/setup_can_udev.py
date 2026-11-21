@@ -133,10 +133,14 @@ def identify(
             return None
         serials[name] = serial
         remaining.discard(gone)
+        before_replug = can_interfaces(excluded)
         input(f"  plug the {label} back in, then press Enter... ")
-        wait_for_change(
-            can_interfaces(excluded), want_removed=False, timeout=60, excluded=excluded
+        reappeared = wait_for_change(
+            before_replug, want_removed=False, timeout=60, excluded=excluded
         )
+        if reappeared is None:
+            print(f"  ! {label} did not reappear; aborting without writing udev rules")
+            return None
     return serials
 
 

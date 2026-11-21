@@ -339,13 +339,18 @@ def _build_hardware(cfg: StationConfig) -> list[ArmUnit]:
     unsupported = [
         cfg.robot.controller_for(robot).type
         for robot in robots
-        if not is_passive_gello(cfg.robot.controller_for(robot).type)
+        if not (
+            is_passive_gello(cfg.robot.controller_for(robot).type)
+            or cfg.robot.controller_for(robot).type.startswith("yam_lead_")
+        )
     ]
     if unsupported:
         raise ValueError(
-            "remote hardware mode currently requires passive GELLO leaders; "
+            "remote hardware mode supports passive GELLO or motorized YAM leaders; "
             f"unsupported controller(s): {unsupported}"
         )
+    if cfg.robot.bilateral_kp > 0:
+        raise ValueError("remote hardware mode requires bilateral_kp: 0")
     ok, message = reset_can_buses(channels=_needed_channels(cfg))
     if not ok:
         raise RuntimeError(f"CAN reset failed: {message}")

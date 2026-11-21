@@ -1,0 +1,43 @@
+# Bimanual YAM station with motorized teaching-handle leaders and wrist cameras.
+# The two arm CAN pairs use stable role names; the LinearBot base remains on can0.
+
+robot:
+  type: yam
+  arm_name: left
+  arm_type: yam
+  num_arm_joints: 6
+  leader_gripper_type: yam_teaching_handle
+  bilateral_kp: 0.0
+  robots:
+    - {type: yam_left, gripper: linear_4310, channel: can_left}
+    - {type: yam_right, gripper: linear_4310, channel: can_right}
+  controllers:
+    - {type: yam_lead_left, controls: yam_left, channel: can_lead_l}
+    - {type: yam_lead_right, controls: yam_right, channel: can_lead_r}
+
+cameras:
+  # Wrist-mounted cameras use the station's left/right observation roles.
+  - name: left
+    type: realsense
+    role: left
+    mode: mono
+    serial: "218622272630"
+    width: 640
+    height: 480
+    fps: 30
+    enable_depth: false
+
+  - name: right
+    type: realsense
+    role: right
+    mode: mono
+    serial: "218622274205"
+    width: 640
+    height: 480
+    fps: 30
+    enable_depth: false
+
+control_hz: 30.0
+save_root: data/episodes
+task_name: unknown
+data_format: default

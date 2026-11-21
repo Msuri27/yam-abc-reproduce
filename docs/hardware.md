@@ -61,6 +61,11 @@ Reset CAN paths now reset only the station's configured arm channels, not `can0`
 
 ## 2. Robots & controllers
 
+For the distributed bimanual setup with motorized YAM leaders and left/right wrist cameras,
+start from `configs/station_yam_bimanual_wrist.yaml`. It uses the four stable arm channel
+names and keeps the separate LinearBot bus `can0` out of the robot config. Verify the three
+camera serials against the cameras attached to the Thor before collecting.
+
 Edit `configs/station_yam.yaml`:
 
 - Each `robots` entry = a follower arm + its gripper.
@@ -223,9 +228,9 @@ cycles every `can*` interface, including an unrelated LinearBot `can0`.
 Use the Pi as the **only CAN host** and the Thor for the GUI, cameras, and recording. The
 bridge carries small joint-state and target messages over a persistent, lock-step TCP
 connection; it does not tunnel raw CAN. Both machines need the same checkout and matching
-`configs/station_yam.yaml` robot/controller layout. The remote mode currently supports the
-passive GELLO leaders in this station and teleop collection; it does not support policy
-deployment.
+station robot/controller layout. Remote teleop supports passive GELLO or motorized YAM
+leaders when `bilateral_kp` is `0`; force feedback and policy deployment are not supported
+through the bridge.
 
 1. Connect the Thor and Pi directly over Ethernet. Assign static addresses on that wired
    link in the same subnet, for example Thor `192.168.50.1/24` and Pi `192.168.50.2/24`.

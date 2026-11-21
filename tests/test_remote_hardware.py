@@ -109,6 +109,39 @@ def test_bridge_snapshot_commands_and_zero_round_trip():
     assert robot.stopped >= 1
 
 
+def test_bridge_supports_motorized_yam_leader_without_raw_encoder_angles():
+    cfg = _cfg()
+    cfg.robot.controllers = [ControllerConfig("yam_lead_left", "yam_left")]
+    robot = FakeRobot()
+    agent = FakeAgent()
+    agent.state_snapshot = lambda: {
+        "arm": [0.1] * 6,
+        "gripper": 0.75,
+        "buttons": [False, True],
+        "raw": None,
+        "cal": None,
+    }
+    bridge = CanHardwareBridge(cfg, "secret", [ArmUnit("left", robot, agent)])
+    port = _free_port()
+    server = threading.Thread(target=bridge.serve_forever, args=("127.0.0.1", port), daemon=True)
+    server.start()
+    assert bridge._listening.wait(1)
+    client = RemoteHardwareClient("127.0.0.1", port, cfg, token="secret")
+    try:
+        client.refresh()
+        (unit,) = build_remote_arm_units(cfg, client)
+        assert unit.agent.read_inputs() == ([False, True], 0.75)
+        assert unit.agent.leader_raw() is None
+        target = np.array([0.1] * 6 + [0.75])
+        np.testing.assert_allclose(unit.agent.act(unit.robot.get_observations()), target)
+        np.testing.assert_allclose(robot.position, target)
+    finally:
+        client.close()
+        bridge.close()
+        server.join(timeout=2)
+    assert not server.is_alive()
+
+
 def test_bridge_rejects_station_layout_mismatch():
     robot = FakeRobot()
     bridge = CanHardwareBridge(_cfg(), "secret", [ArmUnit("left", robot, FakeAgent())])
@@ -179,9 +212,7 @@ def test_bridge_watchdog_holds_and_closes_stale_client():
 def test_bridge_reset_releases_hardware_without_reopening_it(monkeypatch):
     robot = FakeRobot()
     bridge = CanHardwareBridge(_cfg(), "secret", [ArmUnit("left", robot, FakeAgent())])
-    monkeypatch.setattr(
-        can_bridge, "reset_can_buses", lambda channels=None: (True, "CAN reset")
-    )
+    monkeypatch.setattr(can_bridge, "reset_can_buses", lambda channels=None: (True, "CAN reset"))
     monkeypatch.setattr(can_bridge, "check_can_up", lambda channels: [])
     port = _free_port()
     server = threading.Thread(target=bridge.serve_forever, args=("127.0.0.1", port), daemon=True)
