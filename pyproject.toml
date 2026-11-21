@@ -220,6 +220,7 @@ conflicts = [
 [project.scripts]
 yam-abc-gui = "yam_abc_reproduce.cli:gui"
 yam-abc-teleop = "yam_abc_reproduce.cli:teleop"
+yam-abc-hardware = "yam_abc_reproduce.robot.can_bridge:main"
 yam-abc-convert = "yam_abc_reproduce.cli:convert"
 yam-abc-viz = "yam_abc_reproduce.cli:viz"
 yam-abc-cameras = "yam_abc_reproduce.cli:cameras"

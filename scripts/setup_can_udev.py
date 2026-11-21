@@ -6,13 +6,14 @@ the station expects stable role names (``can_left``, ``can_right``, ``can_lead_l
 ``can_lead_r``). Rather than unplugging cables one at a time and taking notes:
 
     python scripts/setup_can_udev.py            # 4-role bimanual station
+    python scripts/setup_can_udev.py --exclude-interface can0  # keep a separate base bus
     python scripts/setup_can_udev.py --roles can_right,can_lead_r   # single arm
     python scripts/setup_can_udev.py --print-only                   # no write
 
-Per role: unplug that device, watch ``/sys/class/net`` for the interface that disappears,
-record its serial, plug back in — the last role is inferred from what remains. Then it
-generates ``/etc/udev/rules.d/90-can.rules``, shows it for approval, writes it via sudo
-(the only step needing root), reloads udev, and tells you to replug.
+Per role: unplug that device, watch the non-excluded CAN interfaces for the one that
+disappears, record its serial, plug back in — the last role is inferred from what remains.
+Then it generates ``/etc/udev/rules.d/90-can.rules``, shows it for approval, writes it via
+sudo (the only step needing root), reloads udev, and tells you to replug.
 
 Read-only until that confirmed write, and it never sends a CAN frame, so arm/leader power
 state does not matter — only USB presence does.
@@ -37,11 +38,14 @@ DEFAULT_ROLES = [
 RULES_PATH = "/etc/udev/rules.d/90-can.rules"
 
 
-def can_interfaces() -> set[str]:
+def can_interfaces(excluded: set[str] | None = None) -> set[str]:
     root = Path("/sys/class/net")
     if not root.is_dir():
         return set()
-    return {p.name for p in root.iterdir() if p.name.startswith("can")}
+    excluded = excluded or set()
+    return {
+        p.name for p in root.iterdir() if p.name.startswith("can") and p.name not in excluded
+    }
 
 
 def serial_of(iface: str) -> str | None:
@@ -67,11 +71,16 @@ def generate_rules(mapping: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def wait_for_change(before: set[str], want_removed: bool, timeout: float = 120.0) -> str | None:
+def wait_for_change(
+    before: set[str],
+    want_removed: bool,
+    timeout: float = 120.0,
+    excluded: set[str] | None = None,
+) -> str | None:
     """Block until an interface disappears from (or reappears in) ``before``."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        now = can_interfaces()
+        now = can_interfaces(excluded)
         diff = (before - now) if want_removed else (now - before)
         if len(diff) == 1:
             return diff.pop()
@@ -83,9 +92,12 @@ def wait_for_change(before: set[str], want_removed: bool, timeout: float = 120.0
     return None
 
 
-def identify(roles: list[tuple[str, str]]) -> dict[str, str] | None:
+def identify(
+    roles: list[tuple[str, str]], excluded: set[str] | None = None
+) -> dict[str, str] | None:
     """Walk the unplug/replug dance; returns {role_name: serial}."""
-    start = can_interfaces()
+    excluded = excluded or set()
+    start = can_interfaces(excluded)
     print(f"detected CAN interfaces: {sorted(start) or 'none'}")
     if len(start) != len(roles):
         print(f"error: expected {len(roles)} adapters for roles "
@@ -105,7 +117,12 @@ def identify(roles: list[tuple[str, str]]) -> dict[str, str] | None:
             serials[name] = serial
             break
         input(f"\n[{name}] UNPLUG the USB cable of the {label}, then press Enter... ")
-        gone = wait_for_change(can_interfaces() | remaining, want_removed=True, timeout=60)
+        gone = wait_for_change(
+            can_interfaces(excluded) | remaining,
+            want_removed=True,
+            timeout=60,
+            excluded=excluded,
+        )
         if gone is None or gone not in remaining:
             print("  ! could not identify a single removed interface; aborting")
             return None
@@ -117,7 +134,9 @@ def identify(roles: list[tuple[str, str]]) -> dict[str, str] | None:
         serials[name] = serial
         remaining.discard(gone)
         input(f"  plug the {label} back in, then press Enter... ")
-        wait_for_change(can_interfaces(), want_removed=False, timeout=60)
+        wait_for_change(
+            can_interfaces(excluded), want_removed=False, timeout=60, excluded=excluded
+        )
     return serials
 
 
@@ -129,6 +148,12 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--roles", default=",".join(r for r, _ in DEFAULT_ROLES),
                     help="comma-separated interface names to assign, in prompt order")
+    ap.add_argument(
+        "--exclude-interface",
+        action="append",
+        default=[],
+        help="ignore an unrelated CAN interface (repeatable), e.g. --exclude-interface can0",
+    )
     ap.add_argument("--print-only", action="store_true",
                     help="identify and print the rules, but do not write or reload")
     ap.add_argument("--selftest", action="store_true", help=argparse.SUPPRESS)
@@ -150,10 +175,11 @@ def main() -> int:
             return 1
 
     # Pre-cache serials so we can resolve an interface after it disappears.
-    for iface in can_interfaces():
+    excluded = set(args.exclude_interface)
+    for iface in can_interfaces(excluded):
         serial_of_cache[iface] = serial_of(iface)
 
-    mapping = identify(roles)
+    mapping = identify(roles, excluded)
     if not mapping:
         return 1
 

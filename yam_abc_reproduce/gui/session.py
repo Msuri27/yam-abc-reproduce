@@ -40,8 +40,19 @@ from .camera_hub import CameraHub
 
 
 class CollectSession:
-    def __init__(self, cfg: StationConfig, mock: bool = False):
+    def __init__(
+        self,
+        cfg: StationConfig,
+        mock: bool = False,
+        hardware_host: str | None = None,
+        hardware_port: int = 8765,
+    ):
         self.mock = mock
+        if mock and hardware_host is not None:
+            raise ValueError("mock mode cannot be combined with a remote hardware host")
+        self.hardware_host = hardware_host
+        self.hardware_port = int(hardware_port)
+        self.remote_hardware = None
         self.cfg = cfg
         # Restore the last task name so a GUI restart pre-fills the Task field with what
         # you were collecting, instead of the station yaml's default.
@@ -144,7 +155,12 @@ class CollectSession:
         """Build the teleop loop and recorder over the already-built units and the
         already-connected cameras, and wire the button callbacks."""
         # Pass the running workers so the loop shares them (doesn't reopen devices).
-        self.loop = ControlLoop(self.units, self.workers, cfg.control_hz)
+        self.loop = ControlLoop(
+            self.units,
+            self.workers,
+            cfg.control_hz,
+            remote_hardware=self.remote_hardware,
+        )
         self.recorder = EpisodeRecorder(
             cfg.save_root, cfg, self.workers, arm_names=[u.name for u in self.units]
         )
@@ -163,8 +179,9 @@ class CollectSession:
         """
         if self.loop is not None:
             self.loop.stop()
-        if not self.mock:
-            ok, msg = reset_can_buses()
+        if not self.mock and self.hardware_host is None:
+            needed = self._needed_channels(cfg, followers_only)
+            ok, msg = reset_can_buses(channels=needed)
             self.last_can_msg = msg
             # Pre-flight: every bus we're about to open must be up before i2rt opens
             # it, else fail with a clear message instead of deep inside the driver.
@@ -179,7 +196,21 @@ class CollectSession:
         self.connect_cameras(cfg)  # reuse preview cameras if already up
         try:
             self.cfg = cfg
-            self.units = build_arm_units(cfg, mock=self.mock, followers_only=followers_only)
+            if self.hardware_host is not None:
+                if followers_only:
+                    raise RuntimeError(
+                        "remote hardware mode currently supports teleoperation and collection, "
+                        "not policy deployment"
+                    )
+                from ..robot.remote import RemoteHardwareClient, build_remote_arm_units
+
+                self.remote_hardware = RemoteHardwareClient(
+                    self.hardware_host, self.hardware_port, cfg
+                )
+                self.units = build_remote_arm_units(cfg, self.remote_hardware)
+                self.remote_hardware.refresh()
+            else:
+                self.units = build_arm_units(cfg, mock=self.mock, followers_only=followers_only)
             self.followers_only = followers_only
             if not followers_only:
                 self._build_teleop_stack(cfg)
@@ -192,6 +223,9 @@ class CollectSession:
         except Exception:
             # Release the half-built units on failure so a retry can rebuild. Cameras stay.
             self._teardown_units()
+            if self.remote_hardware is not None:
+                self.remote_hardware.close()
+                self.remote_hardware = None
             self.live = False
             raise
 
@@ -307,6 +341,32 @@ class CollectSession:
         sync_was_on = bool(self.loop and self.loop.sync_enabled)
         if sync_was_on:
             self.disable_sync()
+        if self.hardware_host is not None:
+            client = self.remote_hardware
+            one_shot_client = client is None or not client.connected
+            if one_shot_client:
+                client = None
+            try:
+                if client is None:
+                    from ..robot.remote import RemoteHardwareClient
+
+                    client = RemoteHardwareClient(self.hardware_host, self.hardware_port, self.cfg)
+                devices = client.zero(side)["devices"]
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "message": f"{type(exc).__name__}: {exc}",
+                    "sync_disabled": sync_was_on,
+                }
+            finally:
+                if one_shot_client and client is not None:
+                    client.close()
+            return {
+                "ok": True,
+                "message": f"zeroed {side} passive GELLO encoders {devices} on the Pi",
+                "devices": devices,
+                "sync_disabled": sync_was_on,
+            }
 
         from ..robot.passive_gello import PassiveGelloLeader
 
@@ -409,6 +469,10 @@ class CollectSession:
         from ..deploy.loop import DeployLoop
 
         cfg = cfg or self.cfg
+        if self.hardware_host is not None:
+            raise RuntimeError(
+                "policy deployment is not supported through the remote CAN bridge yet"
+            )
         if self.deploy_loop is not None:
             raise RuntimeError("a rollout is already running — press Stop first")
         # Check the home pose against this station before anything moves: move_to_home
@@ -553,15 +617,44 @@ class CollectSession:
         # Stop the teleop loop + release the robot units (drop i2rt handles) before the reset.
         self._teardown_units()
         can_msg = "(mock)"
-        if not self.mock:
+        reset_ok = True
+        if self.hardware_host is not None:
+            client = self.remote_hardware
+            one_shot_client = client is None or not client.connected
+            if one_shot_client:
+                client = None
             try:
-                _, can_msg = reset_can_buses()
+                if client is None:
+                    from ..robot.remote import RemoteHardwareClient
+
+                    client = RemoteHardwareClient(
+                        self.hardware_host,
+                        self.hardware_port,
+                        self.cfg,
+                        initialize=False,
+                    )
+                can_msg = client.reset_hardware()
+            except Exception as e:  # noqa: BLE001 — surface bridge/CAN failure to the GUI
+                can_msg = f"Pi hardware reset failed: {e}"
+                reset_ok = False
+            finally:
+                if one_shot_client and client is not None:
+                    client.close()
+                if self.remote_hardware is not None:
+                    self.remote_hardware.close()
+                    self.remote_hardware = None
+        elif not self.mock:
+            try:
+                _, can_msg = reset_can_buses(
+                    channels=self._needed_channels(self.cfg, followers_only=False)
+                )
                 self.last_can_msg = can_msg
             except Exception as e:  # noqa: BLE001
                 can_msg = f"CAN reset failed: {e}"
+                reset_ok = False
         self.live = False
         self._estopped = False
-        return {"ok": True, "can": can_msg}
+        return {"ok": reset_ok, "can": can_msg}
 
     # --- queries ----------------------------------------------------------
     def list_episodes(self, task_name: str | None = None) -> list[str]:

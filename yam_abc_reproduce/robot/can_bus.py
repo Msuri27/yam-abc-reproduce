@@ -6,12 +6,16 @@ Run at go-live (first Start Teleop) on the hardware path and re-exposed as the G
 
 from __future__ import annotations
 
+import os
+import re
+import shutil
 import subprocess
 from pathlib import Path
 
 _SCRIPT = (
     Path(__file__).resolve().parents[2] / "third_party" / "i2rt" / "scripts" / "reset_all_can.sh"
 )
+_CHANNEL = re.compile(r"can[A-Za-z0-9_.-]{1,12}\Z")
 
 
 def list_can_interfaces() -> list[str]:
@@ -43,8 +47,45 @@ def check_can_up(channels: list[str], timeout_s: float = 5.0) -> list[str]:
     return down
 
 
-def reset_can_buses(timeout_s: float = 30.0) -> tuple[bool, str]:
-    """Bring all ``can*`` interfaces up at 1 Mbit/s. Returns ``(ok, output)``."""
+def reset_can_buses(
+    timeout_s: float = 30.0, channels: list[str] | None = None
+) -> tuple[bool, str]:
+    """Reset CAN interfaces at 1 Mbit/s, optionally limiting the operation to channels.
+
+    With ``channels=None`` this preserves the historical all-interface reset. Supplying
+    names is safer on mixed stations: unrelated buses (for example a mobile base on
+    ``can0``) are not brought down or reconfigured.
+    """
+    if channels is not None:
+        selected = list(dict.fromkeys(channels))
+        invalid = [name for name in selected if not _CHANNEL.fullmatch(name)]
+        if invalid:
+            return False, f"invalid CAN interface name(s): {invalid}"
+        if not selected:
+            return False, "no CAN interfaces were selected"
+        ip = shutil.which("ip") or "/usr/sbin/ip"
+        sudo = [] if os.geteuid() == 0 else ["sudo", "-n"]
+        failures = []
+        for channel in selected:
+            for state in (["down"], ["up", "type", "can", "bitrate", "1000000"]):
+                try:
+                    result = subprocess.run(
+                        [*sudo, ip, "link", "set", channel, *state],
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout_s,
+                        stdin=subprocess.DEVNULL,
+                    )
+                except (subprocess.SubprocessError, OSError) as exc:
+                    failures.append(f"{channel}: {exc}")
+                    continue
+                if result.returncode:
+                    message = (result.stderr or result.stdout or f"exit code {result.returncode}").strip()
+                    failures.append(f"{channel}: {message}")
+        if failures:
+            return False, "\n".join(failures)
+        return True, f"Reset CAN interfaces: {', '.join(selected)}"
+
     if not _SCRIPT.exists():
         return False, f"CAN setup script not found: {_SCRIPT}"
     try:

@@ -32,6 +32,8 @@ def cameras(argv: list[str] | None = None) -> None:
 
 def teleop(argv: list[str] | None = None) -> None:
     """Run teleop + (optional) recording from the command line, headless."""
+    import logging
+
     from .config import build_station_config
     from .runtime import build_arm_units, build_cameras_from_config
     from .teleop.loop import ControlLoop
@@ -42,14 +44,45 @@ def teleop(argv: list[str] | None = None) -> None:
     p.add_argument("--mock", action="store_true", help="use mock robot + cameras")
     p.add_argument("--record", metavar="TASK", default=None, help="record one episode")
     p.add_argument("--seconds", type=float, default=10.0)
+    p.add_argument("--hardware-host", default=None, help="Pi CAN-bridge address")
+    p.add_argument("--hardware-port", type=int, default=8765)
     args = p.parse_args(argv)
+    if args.mock and args.hardware_host:
+        p.error("--mock and --hardware-host cannot be used together")
 
     cfg = build_station_config(args.station, args.cameras)
-    units = build_arm_units(cfg, mock=args.mock)
-    cameras = build_cameras_from_config(cfg, mock=args.mock)
-    loop = ControlLoop(units, cameras, control_hz=cfg.control_hz)
-    loop.run_for(seconds=args.seconds, record_task=args.record, save_root=cfg.save_root,
-                 station=cfg)
+    remote_hardware = None
+    units = []
+    try:
+        if args.hardware_host:
+            from .robot.remote import RemoteHardwareClient, build_remote_arm_units
+
+            remote_hardware = RemoteHardwareClient(args.hardware_host, args.hardware_port, cfg)
+            units = build_remote_arm_units(cfg, remote_hardware)
+            remote_hardware.refresh()
+        else:
+            units = build_arm_units(cfg, mock=args.mock)
+        cameras = build_cameras_from_config(cfg, mock=args.mock)
+        loop = ControlLoop(
+            units,
+            cameras,
+            control_hz=cfg.control_hz,
+            remote_hardware=remote_hardware,
+        )
+        loop.run_for(
+            seconds=args.seconds,
+            record_task=args.record,
+            save_root=cfg.save_root,
+            station=cfg,
+        )
+    finally:
+        if remote_hardware is not None:
+            for unit in units:
+                try:
+                    unit.robot.stop()
+                except Exception:
+                    logging.exception("failed to hold remote follower %s on exit", unit.name)
+            remote_hardware.close()
 
 
 def convert(argv: list[str] | None = None) -> None:
@@ -97,14 +130,29 @@ def gui(argv: list[str] | None = None) -> None:
     p.add_argument("--mock", action="store_true", help="use mock robot + cameras")
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=8042)
+    p.add_argument(
+        "--hardware-host",
+        default=None,
+        help="Pi CAN-bridge address; camera capture and collection remain on this machine",
+    )
+    p.add_argument("--hardware-port", type=int, default=8765)
     args = p.parse_args(argv)
+    if args.mock and args.hardware_host:
+        p.error("--mock and --hardware-host cannot be used together")
 
     # Root logger at INFO so the station's own diagnostics (each follower's resolved gripper
     # travel, i2rt's gripper calibration) reach the terminal; the default is WARNING, no handler.
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
     cfg = build_station_config(args.station, args.cameras)
-    app = create_app(cfg, mock=args.mock, station_path=args.station, cameras_path=args.cameras)
+    app = create_app(
+        cfg,
+        mock=args.mock,
+        station_path=args.station,
+        cameras_path=args.cameras,
+        hardware_host=args.hardware_host,
+        hardware_port=args.hardware_port,
+    )
 
     # Silencing uvicorn (below) also drops its "running on ..." banner, so announce the URL
     # ourselves — on the startup event, which fires only once the port is bound.

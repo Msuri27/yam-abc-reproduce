@@ -240,6 +240,26 @@ class YamTeleop(TeleopAgent):
         _, gripper, buttons = self._read_leader()
         return buttons, gripper
 
+    def state_snapshot(self) -> dict:
+        """One leader read for a remote bridge: pose, buttons, and optional raw angles."""
+        arm, gripper, buttons = self._read_leader()
+        raw = self.leader_raw()
+        return {
+            "arm": arm.tolist(),
+            "gripper": float(gripper),
+            "buttons": [bool(button) for button in buttons[:2]],
+            "raw": None if raw is None else raw[0].tolist(),
+            "cal": None if raw is None else raw[1].tolist(),
+        }
+
+    def hardware_zero(self) -> list[int]:
+        """Zero a leader that supports encoder EEPROM calibration."""
+        zero = getattr(self._require_leader(), "hardware_zero", None)
+        if not callable(zero):
+            raise RuntimeError("this leader does not support hardware zeroing")
+        self._cached = None
+        return zero()
+
     def leader_raw(self) -> tuple[np.ndarray, np.ndarray] | None:
         """``(raw, cal)`` leader joint angles in radians for the live readout, or None for
         a leader without a raw readout (``YamLeaderArm`` reports through i2rt, already

@@ -48,9 +48,16 @@ def create_app(
     mock: bool = False,
     station_path: str | None = None,
     cameras_path: str | None = None,
+    hardware_host: str | None = None,
+    hardware_port: int = 8765,
 ) -> FastAPI:
     app = FastAPI(title="YAM-ABC-Reproduce", version=__version__)
-    session = CollectSession(cfg, mock=mock)
+    session = CollectSession(
+        cfg,
+        mock=mock,
+        hardware_host=hardware_host,
+        hardware_port=hardware_port,
+    )
     jobs = JobManager()
     _transcode_lock = threading.Lock()  # serializes review-video H.264 transcodes
 
@@ -813,9 +820,13 @@ def create_app(
     @app.post("/api/maintenance/reset-can")
     def reset_can():
         """Bring the CAN buses back up (e.g. after re-plugging an arm)."""
+        if session.hardware_host is not None:
+            return session.reset_session()
         from ..robot.can_bus import reset_can_buses
 
-        ok, out = reset_can_buses()
+        ok, out = reset_can_buses(
+            channels=session._needed_channels(session.cfg, followers_only=False)
+        )
         return {"ok": ok, "output": out}
 
     @app.post("/api/maintenance/zero-gello")

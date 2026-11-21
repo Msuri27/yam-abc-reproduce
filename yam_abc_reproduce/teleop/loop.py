@@ -12,11 +12,16 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from typing import Protocol
 
 from ..camera.interface import CameraDriver, CameraFrame
 from ..camera.worker import CameraWorker
 from ..config import StationConfig
 from ..runtime import ArmUnit
+
+
+class SnapshotSource(Protocol):
+    def refresh(self) -> None: ...
 
 
 class ControlLoop:
@@ -26,6 +31,7 @@ class ControlLoop:
         cameras: list[CameraDriver],
         control_hz: float = 30.0,
         on_frame: Callable[[str, CameraFrame], None] | None = None,
+        remote_hardware: SnapshotSource | None = None,
     ):
         # One or more driven arms; global sync gates all of them together.
         # Every unit needs its leader: a followers-only (autonomy) unit has no agent,
@@ -39,6 +45,7 @@ class ControlLoop:
             )
         self.units = units
         self.cameras = cameras
+        self.remote_hardware = remote_hardware
         # Cameras may arrive as raw drivers (the loop owns capture — CLI path) or
         # as already-running CameraWorkers owned elsewhere (the GUI session, which
         # starts them for preview before teleop). A device can only be opened once,
@@ -129,6 +136,8 @@ class ControlLoop:
 
     # --- one iteration -----------------------------------------------------
     def _step(self) -> None:
+        if self.remote_hardware is not None:
+            self.remote_hardware.refresh()
         frames: dict[str, CameraFrame] = {}
         for w in self._workers:
             fr = w.read()  # latest cached frame; non-blocking (worker feeds preview)
@@ -264,8 +273,12 @@ class ControlLoop:
         for u in self.units:
             try:
                 u.agent.stop()
-            finally:
+            except Exception:
+                logging.exception("E-STOP: failed to stop the %s teleop agent", u.name)
+            try:
                 u.robot.stop()
+            except Exception:
+                logging.exception("E-STOP: failed to hold the %s follower", u.name)
 
     # --- synchronous mode (CLI) -------------------------------------------
     def run_for(

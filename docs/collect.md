@@ -15,6 +15,45 @@ uv sync --extra camera --extra gui
 yam-abc-gui          # http://localhost:8042 ; the Collect tab opens by default
 ```
 
+### Thor cameras + Pi CAN hardware
+
+For a split station, run the GUI and cameras on the Thor and the CAN bridge on the Pi.
+The Pi is the **only** machine that opens the four CAN buses. Both machines need this
+repository and the same `configs/station_yam.yaml` arm/controller layout. Use a direct,
+isolated Ethernet link and a shared secret; do not expose the bridge port to a general
+network. The bridge checks that robot/controller settings match before opening CAN, so keep
+those Station-rail settings unchanged or update the YAML on both machines. Camera, task, and
+output settings remain local to the Thor. The bridge does not control the LinearBot
+base/elevator on `can0`, and its CAN reset only targets the four configured arm channels.
+
+On the Pi, start the bridge first:
+
+```bash
+export YAM_CAN_BRIDGE_TOKEN='<same-long-random-secret-on-both-machines>'
+yam-abc-hardware --station configs/station_yam.yaml --host <PI_WIRED_IP>
+```
+
+On the Thor, start the normal GUI with the Pi's wired IP:
+
+```bash
+export YAM_CAN_BRIDGE_TOKEN='<same-long-random-secret-on-both-machines>'
+yam-abc-gui --station configs/station_yam.yaml --hardware-host <PI_WIRED_IP>
+```
+
+The GUI still captures cameras, previews, and records episodes locally on the Thor. The
+bridge sends leader/follower joint snapshots to the Thor and applies the returned follower
+targets on the Pi. Its lock-step TCP requests avoid queuing old targets; if the Thor stops
+requesting updates or disconnects for 0.5 seconds, the Pi holds both followers. **Start
+Teleop** and the normal E-STOP/Reset Session controls work through the bridge. Do not start
+a second hardware/teleop process on the Pi while the bridge is running. Remote policy
+deployment is not implemented yet; use the local hardware mode for the Deploy tab.
+
+For a headless Thor run instead of the GUI, use
+`yam-abc-teleop --hardware-host <PI_WIRED_IP> --record "<task>" --seconds 15`.
+
+Configure the wired addresses and CAN adapters first; see
+[the split-station setup](hardware.md#6-thor-pi-split-station).
+
 ## Top bar (all tabs)
 
 | Item | Meaning |
@@ -49,10 +88,11 @@ YAM-ABC-Reproduce's default format. The task name is **slugified** — lowercase
 punctuation to `_` — so `put the bottle in the bin` becomes `put_the_bottle_in_the_bin`, and
 that slug is what the Train tab's task field and `yam-abc-convert data/episodes/<task>` want.
 
-Headless alternative: `yam-abc-teleop --record "<task>" --seconds 15` records one episode — but
-bring the CAN buses up yourself first (`bash third_party/i2rt/scripts/reset_all_can.sh`), since
-unlike **Start Teleop** it does not reset CAN. Add `--mock` to exercise the path with no
-hardware.
+Headless alternative: `yam-abc-teleop --record "<task>" --seconds 15` records one episode.
+For local hardware mode, bring up only the CAN channels in the station config first; avoid
+`reset_all_can.sh` on a mixed station because it also resets unrelated interfaces such as a
+LinearBot `can0`. With `--hardware-host`, the Pi bridge handles the configured arm channels.
+Add `--mock` to exercise the local path with no hardware.
 
 ### Station rail (left)
 

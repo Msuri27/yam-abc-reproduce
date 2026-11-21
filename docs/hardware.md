@@ -37,9 +37,10 @@ If an arm is unresponsive, use **Reset CAN** in the GUI (or re-run the `ip link`
 
 ### Naming the adapters (udev)
 
-> Fastest path: `python scripts/setup_can_udev.py` walks you through the
+> Fastest path: `python scripts/setup_can_udev.py --exclude-interface can0` walks you through the
 > unplug/replug identification and writes `/etc/udev/rules.d/90-can.rules`
-> for you. The steps below are the manual equivalent.
+> for you, while leaving a separate LinearBot/base interface named `can0` alone.
+> The steps below are the manual equivalent.
 
 Those stable names (`can_left`, `can_lead_l`, …) come from **udev rules** that map each
 USB-CAN adapter's serial to a fixed interface name — otherwise Linux assigns `can0/can1/…`
@@ -53,8 +54,10 @@ for the rule template). To find which physical adapter is which:
 2. Repeat one adapter at a time, then write a `/etc/udev/rules.d/*.rules` line per serial
    assigning the name from the table above.
 
-After the rules are in place, `ls /sys/class/net | grep can` should show the named
-interfaces, and the bus names in `configs/station_yam.yaml` will resolve correctly.
+After the rules are in place, `ls /sys/class/net | grep can` should show `can0` plus the
+four named arm interfaces, and the bus names in `configs/station_yam.yaml` will resolve
+correctly. YAM-ABC-Reproduce does not control the LinearBot base/elevator; its go-live and
+Reset CAN paths now reset only the station's configured arm channels, not `can0`.
 
 ## 2. Robots & controllers
 
@@ -210,10 +213,61 @@ With the buses up, confirm the **YAM leader floats freely in your hand**. Press 
 follower eases to the leader's pose, then tracks. It should **never snap**. Watch the live
 previews and the ARM badge, plus the handle's TOP/2ND lamps and the trigger bar in the tray.
 
-Prefer headless? `yam-abc-teleop --seconds 15` runs teleop from the terminal — but bring the
-buses up yourself first (the `ip link` commands above, or
-`bash third_party/i2rt/scripts/reset_all_can.sh`). Unlike **Start Teleop**, it does not reset
-CAN for you, so on a freshly booted station it fails while opening a down interface.
+Prefer headless? `yam-abc-teleop --seconds 15` runs teleop from the terminal — bring only the
+channels in the station config up first, because unlike **Start Teleop** it does not reset
+CAN for you. Avoid `bash third_party/i2rt/scripts/reset_all_can.sh` on a mixed station: it
+cycles every `can*` interface, including an unrelated LinearBot `can0`.
+
+## 6. Thor-Pi split station
+
+Use the Pi as the **only CAN host** and the Thor for the GUI, cameras, and recording. The
+bridge carries small joint-state and target messages over a persistent, lock-step TCP
+connection; it does not tunnel raw CAN. Both machines need the same checkout and matching
+`configs/station_yam.yaml` robot/controller layout. The remote mode currently supports the
+passive GELLO leaders in this station and teleop collection; it does not support policy
+deployment.
+
+1. Connect the Thor and Pi directly over Ethernet. Assign static addresses on that wired
+   link in the same subnet, for example Thor `192.168.50.1/24` and Pi `192.168.50.2/24`.
+   Verify each can ping the other. Keep this link isolated from untrusted networks.
+2. On the **Pi**, from the repository root, install the base dependencies with `uv sync`,
+   configure the four USB-CAN adapters with the names in §1, and install the CAN sudoers
+   rule (`bash scripts/setup_can_sudoers.sh`). Run `yam-abc-doctor` on the Pi and resolve
+   CAN failures before starting the bridge. Cameras and the GUI extras are only needed on
+   the Thor.
+3. Generate a random shared token once (for example
+   `python -c 'import secrets; print(secrets.token_hex(32))'`). Set the resulting hex value
+   as `YAM_CAN_BRIDGE_TOKEN` in both terminals; do not put it in station YAML or commit it.
+4. From the repository root on the **Pi**, start the CAN service:
+
+   ```bash
+   export YAM_CAN_BRIDGE_TOKEN='<shared-hex-token>'
+   yam-abc-hardware --station configs/station_yam.yaml --host 192.168.50.2
+   ```
+
+   It listens on TCP port `8765` without opening CAN. When the Thor first starts teleop, the
+   bridge resets CAN and opens both leaders and both followers. If follower gripper limits
+   are not pinned in the station YAML, the normal i2rt gripper calibration can move each
+   jaw to its stops at that point; clear the jaws first. Leave this terminal running. Do
+   not start another program that opens CAN on the Pi at the same time.
+5. On the **Thor**, from the repository root, install the camera and GUI extras with
+   `uv sync --extra camera --extra gui`, then start the GUI pointing at the Pi's wired IP:
+
+   ```bash
+   export YAM_CAN_BRIDGE_TOKEN='<same-shared-hex-token>'
+   yam-abc-gui --station configs/station_yam.yaml --hardware-host 192.168.50.2
+   ```
+
+   Camera previews, recording, and episode files stay on the Thor. Start Teleop, verify
+   both arms mirror correctly at low speed, then collect. E-STOP, leader zeroing, power-off,
+   and Reset Session are routed to the Pi; a bridge timeout/disconnect causes the Pi to
+   hold both followers. Keep a physical e-stop accessible and support the arms before
+   resetting CAN or powering them off.
+
+To use a different wired address or port, pass the Pi's bind address to `--host` and the
+same port to the Thor's `--hardware-port`. The Pi's default port is `8765`. The shared token
+is an access check, not encryption; use the bridge only on the isolated link and do not
+forward its port.
 
 ## Safety
 
